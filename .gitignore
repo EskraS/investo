@@ -1,8 +1,13 @@
-venv/
+backend/venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 node_modules/
 dist/
 backend/data/*.db
 .env
+.env.*
 idea/
+.tours/
+.cursor/
+graphify-out/

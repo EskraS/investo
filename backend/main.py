@@ -23,10 +23,10 @@ app.add_middleware(
 
 class BacktestRequest(BaseModel):
     ticker: str
-    fast: int = Field(ge=2, le=199)
-    slow: int = Field(ge=3, le=200)
-    commission_pct: float = Field(default=0.05, ge=0, le=1)
-    position_pct: float = Field(default=5.0, ge=1, le=100)
+    fast: int
+    slow: int
+    commission_pct: float = Field(default=0.05)
+    position_pct: float = Field(default=5.0)
 
 
 @app.get("/api/health")
@@ -38,8 +38,16 @@ def health():
 def backtest(req: BacktestRequest):
     if req.ticker not in TICKERS:
         raise HTTPException(400, f"Unknown ticker. Allowed: {', '.join(TICKERS)}")
+    if req.fast < 2:
+        raise HTTPException(400, "fast must be at least 2")
+    if req.slow > 200:
+        raise HTTPException(400, "slow must be at most 200")
     if req.fast >= req.slow:
         raise HTTPException(400, "fast must be < slow")
+    if req.position_pct < 1 or req.position_pct > 100:
+        raise HTTPException(400, "position_pct must be between 1 and 100")
+    if req.commission_pct < 0 or req.commission_pct > 1:
+        raise HTTPException(400, "commission_pct must be between 0 and 1")
     df = get_ohlcv(req.ticker)
     result = run_backtest(
         df, req.fast, req.slow, req.commission_pct, req.position_pct

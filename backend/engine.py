@@ -17,6 +17,14 @@ Rules:
 The loop is the product. Metrics and HTTP wait until the trades are right.
 """
 
+from metrics import (
+    total_return_pct,
+    cagr_pct,
+    max_drawdown_pct,
+    sharpe,
+    win_rate_pct,
+)
+
 INITIAL_CASH = 10_000.0
 
 
@@ -30,7 +38,7 @@ def run_backtest(df, fast: int, slow: int, commission_pct: float, position_pct: 
     trades: [{entry_date, entry_price, exit_date, exit_price, return_pct,
              forced_close}] — fills are opens, except a forced exit (last close).
     price: [{date, open, close}] — one row per bar, ascending.
-    metrics: placeholder until day 4 fills it via metrics.py.
+    metrics: {strategy, buyhold} — same five functions on both curves.
     """
     rate = commission_pct / 100
     size = position_pct / 100
@@ -98,9 +106,31 @@ def run_backtest(df, fast: int, slow: int, commission_pct: float, position_pct: 
     ]
     price = [{"date": d, "open": o, "close": c} for d, o, c in zip(dates, opens, closes)]
 
+    strategy_equity = [row["strategy"] for row in equity_curve]
+    buyhold_equity = [row["buyhold"] for row in equity_curve]
+
+    metrics = {
+        "strategy": {
+            "total_return_pct": total_return_pct(strategy_equity),
+            "cagr_pct": cagr_pct(strategy_equity),
+            "max_drawdown_pct": max_drawdown_pct(strategy_equity),
+            "sharpe": sharpe(strategy_equity),
+            "win_rate_pct": win_rate_pct(trades),
+            "num_trades": len(trades),
+        },
+        "buyhold": {
+            "total_return_pct": total_return_pct(buyhold_equity),
+            "cagr_pct": cagr_pct(buyhold_equity),
+            "max_drawdown_pct": max_drawdown_pct(buyhold_equity),
+            "sharpe": sharpe(buyhold_equity),
+            "win_rate_pct": None,  # buy-and-hold never closes a trade
+            "num_trades": 1,
+        },
+    }
+
     return {
         "equity_curve": equity_curve,
         "trades": trades,
         "price": price,
-        "metrics": {},
+        "metrics": metrics,
     }

@@ -12,9 +12,20 @@ date, open, high, low, close, volume — ascending, no NaN rows.
 
 #delete everything above (for later)
 
+import math
+
 import pandas as pd
 import pytest
 from engine import run_backtest
+from fastapi import HTTPException
+from main import BacktestRequest, backtest
+from metrics import (
+    cagr_pct,
+    max_drawdown_pct,
+    sharpe,
+    total_return_pct,
+    win_rate_pct,
+)
 
 
 def make_ohlcv():
@@ -240,4 +251,73 @@ def test_vectorbt_cross_check_aapl():
    theirs = float(pf.final_value())
    assert len(result["trades"]) == int(pf.trades.count())
    assert abs(ours / theirs - 1) < 0.005
+
+
+# --- Day 4: hand check of each formula. Sharpe std is population (/ n). ---
+
+def test_metric_formulas_on_a_tiny_curve():
+   equity = [100.0, 80.0, 120.0, 60.0]
+   assert total_return_pct(equity) == -40
+   assert max_drawdown_pct(equity) == -50
+
+   n_days = 3  # daily returns, not equity points
+   assert cagr_pct(equity) == pytest.approx(((60 / 100) ** (252 / n_days) - 1) * 100)
+
+   returns = [-0.2, 0.5, -0.5]
+   mean = sum(returns) / len(returns)
+   variance = sum((r - mean) ** 2 for r in returns) / len(returns)
+   population = mean / math.sqrt(variance) * math.sqrt(252)
+   sample_variance = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+   sample = mean / math.sqrt(sample_variance) * math.sqrt(252)
+   assert sharpe(equity) == pytest.approx(population)
+   assert sharpe(equity) != pytest.approx(sample)
+
+def test_metrics_read_a_date_indexed_series_by_position():
+   equity = pd.Series(
+      [100.0, 80.0, 120.0, 60.0],
+      index=pd.date_range("2020-01-01", periods=4, freq="B"),
+   )
+   assert total_return_pct(equity) == -40
+   assert max_drawdown_pct(equity) == -50
+   assert cagr_pct(equity) == pytest.approx(cagr_pct([100.0, 80.0, 120.0, 60.0]))
+   assert sharpe(equity) == pytest.approx(sharpe([100.0, 80.0, 120.0, 60.0]))
+
+def test_sharpe_is_undefined_when_volatility_is_zero_and_the_mean_is_not():
+   assert sharpe([10000.0, 10000.0, 10000.0]) == 0
+   assert sharpe([100.0, 110.0, 121.0]) is None
+   assert sharpe([100.0]) is None
+
+def test_win_rate_hand():
+   trades = [{"return_pct": 1.0}, {"return_pct": -1.0}, {"return_pct": 0.0}]
+   assert win_rate_pct(trades) == pytest.approx(100 / 3)
+   assert win_rate_pct([]) is None
+
+def test_engine_metrics_match_the_contract_on_the_spike():
+   result = run_backtest(make_ohlcv(), fast=2, slow=3, commission_pct=0.05, position_pct=5)
+   strategy = [row["strategy"] for row in result["equity_curve"]]
+   buyhold = [row["buyhold"] for row in result["equity_curve"]]
+   got = result["metrics"]
+   keys = {"total_return_pct", "cagr_pct", "max_drawdown_pct", "sharpe", "win_rate_pct", "num_trades"}
+   assert set(got["strategy"]) == keys
+   assert set(got["buyhold"]) == keys
+   assert got["strategy"]["total_return_pct"] == pytest.approx(total_return_pct(strategy))
+   assert got["buyhold"]["total_return_pct"] == pytest.approx((25 / 7 - 1) * 100)
+   assert got["strategy"]["cagr_pct"] == pytest.approx(cagr_pct(strategy))
+   assert got["buyhold"]["max_drawdown_pct"] == pytest.approx(max_drawdown_pct(buyhold))
+   assert got["strategy"]["sharpe"] == pytest.approx(sharpe(strategy))
+   assert got["buyhold"]["sharpe"] == pytest.approx(sharpe(buyhold))
+   assert got["strategy"]["num_trades"] == 3
+   assert got["strategy"]["win_rate_pct"] == pytest.approx(200 / 3)
+   assert got["buyhold"]["win_rate_pct"] is None
+   assert got["buyhold"]["num_trades"] == 1
+
+def test_commission_out_of_range_is_400():
+   for commission in (50, -1):
+      with pytest.raises(HTTPException) as exc:
+         backtest(BacktestRequest(
+            ticker="aapl.us", fast=20, slow=50,
+            commission_pct=commission, position_pct=5,
+         ))
+      assert exc.value.status_code == 400
+      assert "commission_pct" in exc.value.detail
 
